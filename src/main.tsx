@@ -7,6 +7,7 @@ import { runMigrations } from './storage'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { syncPendoIdentity } from './pendo/pendoIdentity'
 
 // Run storage migrations synchronously BEFORE React mounts.
 // This ensures halo:v1:meta is written and any schema upgrades are applied
@@ -27,7 +28,15 @@ runMigrations()
 dayjs.extend(utc)
 
 // React Router SPA route changes are auto-detected by Pendo via History API hooks.
-// Pendo initialization is deferred to Phase 6 (Pendo Install & Wiring).
+//
+// Boot Pendo exactly once per page load, before React mounts (the snippet in
+// index.html loads the agent). The empty visitor id lets the agent resume its
+// stored visitor or start a new anonymous one. The signed-in user is attached
+// with pendo.identify by syncPendoIdentity() — never by a second initialize,
+// which the agent ignores. Order matters: authStore restores a persisted
+// session during the imports above, so it can only be identified from here.
+pendo.initialize({ visitor: { id: '' } })
+syncPendoIdentity()
 
 const container = document.getElementById('root')
 if (!container) {
