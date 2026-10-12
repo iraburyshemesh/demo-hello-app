@@ -22,10 +22,9 @@
  *   4. `form.reset(values)` re-bases the form's `isDirty` to false so Save
  *      goes back to disabled until the next edit.
  *
- * SET-05 (pendo.identify on save) deferred to Phase 6 per CONTEXT.md (also
- * documented in ROADMAP §Phase 4 preamble). The onSubmit success branch is
- * structured so Phase 6 can drop in the pendo.identify call alongside
- * notifications.show without restructuring.
+ * SET-05: the onSubmit success branch re-identifies the visitor with Pendo
+ * (`identifyPendoVisitor`) alongside notifications.show, so edited profile
+ * fields reach Pendo immediately rather than on the next page load.
  */
 
 import { useForm } from 'react-hook-form'
@@ -36,6 +35,7 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react'
 import { TextInput, Select, Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { identifyPendoVisitor } from '../pendo/pendoIdentity'
 import {
   VisitorSchema,
   updateVisitor,
@@ -97,6 +97,8 @@ export function ProfileTab(): React.JSX.Element | null {
     const updated = updateVisitor(visitor.id, values)
     if (updated) {
       useAuthStore.setState({ currentVisitor: updated })
+      const workspace = useAuthStore.getState().currentWorkspace
+      if (workspace) identifyPendoVisitor(updated, workspace)
       notifications.show({
         title: 'Profile saved',
         message: '',

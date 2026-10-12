@@ -37,6 +37,7 @@ import {
 } from './authRepo'
 import { verifyPassword } from './passwordHash'
 import { clearWizardDraft } from './wizardSession'
+import { identifyPendoVisitor, clearPendoSession } from '../pendo/pendoIdentity'
 
 // TODO Phase 4+: subscribe to window.storage events for cross-tab session sync.
 // Phase 2 UI-SPEC does not require multi-tab session revocation; Plan 01-03's
@@ -82,6 +83,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       currentWorkspace: workspace,
       isAuthenticated: true,
     })
+    // Both sign-in paths (credentials + signup completion) land here, so this
+    // is where Pendo learns who the signed-in visitor is.
+    identifyPendoVisitor(visitor, workspace)
   },
 
   clearSession: () => {
@@ -126,6 +130,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut: async () => {
     get().clearSession()
     clearWizardDraft()
+    // Reset Pendo to a fresh anonymous visitor so whoever uses this browser
+    // next is not tracked under the signed-out user's identity.
+    clearPendoSession()
     return Promise.resolve()
   },
 }))

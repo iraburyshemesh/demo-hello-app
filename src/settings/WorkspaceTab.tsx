@@ -18,10 +18,9 @@
  *   3. `notifications.show({ title: 'Workspace saved' })` toasts confirmation.
  *   4. `form.reset(values)` re-bases isDirty to false.
  *
- * SET-05 (pendo.identify/account update on save) deferred to Phase 6 per
- * CONTEXT.md. The onSubmit success branch is structured so Phase 6 can drop
- * in the pendo.identify (or pendo.updateOptions for account) call alongside
- * notifications.show without restructuring.
+ * SET-05: the onSubmit success branch re-identifies with Pendo
+ * (`identifyPendoVisitor`) alongside notifications.show, so edited workspace
+ * fields reach the Pendo account immediately rather than on the next page load.
  *
  * Three Select option arrays are locked-string-equal to the Step3CompanyPage
  * arrays (the Zod enum check is strict-equal against the same strings:
@@ -38,6 +37,7 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react'
 import { TextInput, Select, Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { identifyPendoVisitor } from '../pendo/pendoIdentity'
 import {
   WorkspaceSchema,
   updateWorkspace,
@@ -96,6 +96,8 @@ export function WorkspaceTab(): React.JSX.Element | null {
     const updated = updateWorkspace(workspace.id, values)
     if (updated) {
       useAuthStore.setState({ currentWorkspace: updated })
+      const visitor = useAuthStore.getState().currentVisitor
+      if (visitor) identifyPendoVisitor(visitor, updated)
       notifications.show({
         title: 'Workspace saved',
         message: '',

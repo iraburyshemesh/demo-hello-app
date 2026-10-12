@@ -22,7 +22,9 @@
  *
  *   4. Hard reload to '/'. Window navigation (not React Router) is the
  *      deliberate choice — re-runs the boot sequence (Mantine init, codec
- *      hydration, auth store module-init) with clean state.
+ *      hydration, auth store module-init) with clean state. Pendo's identity
+ *      is cleared first: reset signs the user out, and without it the
+ *      reloaded app would resume tracking the deleted visitor.
  *
  * No `notifications.show()` after reset — the hard reload destroys the JS
  * context before any toast could render (UI-SPEC §"Toast Notifications"
@@ -72,6 +74,7 @@
 import { Modal, Group, Text } from '@mantine/core'
 import { Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { clearPendoSession } from '../pendo/pendoIdentity'
 import { K } from '../storage/keys'
 
 export type ResetDemoDataModalProps = {
@@ -117,7 +120,10 @@ export function ResetDemoDataModal({ opened, onClose }: ResetDemoDataModalProps)
     //    key deliberately preserved across the reset because Mantine owns it
     //    and it lives outside the halo:v* envelope by design.
 
-    // 4. Hard reload — re-runs boot sequence with clean state.
+    // 4. Hard reload — re-runs boot sequence with clean state. Reset signs the
+    //    user out, so clear Pendo's identity first; otherwise the reloaded
+    //    app's anonymous pendo.initialize would resume the deleted visitor.
+    clearPendoSession()
     window.location.href = '/'
   }
 
