@@ -13,6 +13,7 @@ import { IconX, IconTrash, IconSend, IconAlertCircle } from '@tabler/icons-react
 import { Button, Textarea } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
 import { pendo } from '../pendo/track'
+import { trackAgent } from '../pendo/trackAgent'
 import { useAuthStore } from '../auth'
 import { listMessages, appendMessage, clearMessages } from './chatRepo'
 import {
@@ -22,6 +23,9 @@ import {
   ChatProxyError,
 } from './claudeClient'
 import type { ChatMessage } from './types'
+
+/** Pendo Agent Analytics ID for Halo Assistant, the agent behind this panel. */
+const PENDO_AGENT_ID = 'IOVJmyPj-xGWnZV-cKnb8vgRQKk'
 
 interface ChatPanelProps {
   onClose: () => void
@@ -64,6 +68,19 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
     const nextHistory = [...history, userMessage]
     setMessages(nextHistory)
 
+    // The persisted thread is one conversation until "Start a new conversation"
+    // clears it, so its first message's ID identifies the conversation — stable
+    // across closing/reopening the panel and page reloads.
+    const conversationId = nextHistory[0].id
+    trackAgent('prompt', {
+      agentId: PENDO_AGENT_ID,
+      conversationId,
+      messageId: userMessage.id,
+      content: text,
+      suggestedPrompt: false,
+      fileUploaded: false,
+    })
+
     // Message and reply content are never sent to Pendo — only their lengths.
     const conversationTurn = nextHistory.filter((m) => m.role === 'user').length
     pendo.track('ai_chat_message_sent', {
@@ -79,14 +96,21 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
     setStreamingText('')
     const startedAt = Date.now()
     try {
-      const fullReply = await streamChatReply(nextHistory, (chunk) =>
+      const reply = await streamChatReply(nextHistory, (chunk) =>
         setStreamingText((prev) => (prev ?? '') + chunk),
       )
-      const assistantMessage = appendMessage(workspaceId, { role: 'assistant', content: fullReply })
+      const assistantMessage = appendMessage(workspaceId, { role: 'assistant', content: reply.text })
       setMessages((prev) => [...prev, assistantMessage])
+      trackAgent('agent_response', {
+        agentId: PENDO_AGENT_ID,
+        conversationId,
+        messageId: assistantMessage.id,
+        content: reply.text,
+        modelUsed: reply.model,
+      })
       pendo.track('ai_chat_response_received', {
         messageId: assistantMessage.id,
-        responseLength: fullReply.length,
+        responseLength: reply.text.length,
         latencyMs: Date.now() - startedAt,
         conversationTurn,
         historyLength: nextHistory.length + 1,

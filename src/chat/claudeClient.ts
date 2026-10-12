@@ -19,8 +19,16 @@ import type { ChatMessage } from './types'
 
 type ChatStreamEvent =
   | { type: 'delta'; text: string }
-  | { type: 'done'; text: string }
+  | { type: 'done'; text: string; model: string }
   | { type: 'error'; errorType: string; message: string }
+
+/** A completed assistant reply streamed back through the chat proxy. */
+export interface ChatReply {
+  /** The full assistant reply text. */
+  text: string
+  /** The Claude model that wrote the reply, as reported by the API. */
+  model?: string
+}
 
 /** Thrown when the dev server has no ANTHROPIC_API_KEY configured. */
 export class ChatNotConfiguredError extends Error {
@@ -46,7 +54,7 @@ export class ChatProxyError extends Error {
  *
  * @param history - prior turns, oldest first, including the in-flight user turn
  * @param onDelta - called with each incremental text chunk as it streams in
- * @returns the full assistant reply text once the stream completes
+ * @returns the full assistant reply text, and the model that wrote it, once the stream completes
  * @throws ChatNotConfiguredError if the dev server has no API key set,
  *   ChatProxyError for a classified Anthropic API failure, or a generic Error
  *   for a network/parse failure talking to the proxy itself.
@@ -54,7 +62,7 @@ export class ChatProxyError extends Error {
 export async function streamChatReply(
   history: ChatMessage[],
   onDelta: (chunk: string) => void,
-): Promise<string> {
+): Promise<ChatReply> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -74,6 +82,7 @@ export async function streamChatReply(
   const decoder = new TextDecoder()
   let buffer = ''
   let fullText = ''
+  let model: string | undefined
 
   while (true) {
     const { done, value } = await reader.read()
@@ -91,13 +100,14 @@ export async function streamChatReply(
         onDelta(payload.text)
       } else if (payload.type === 'done') {
         fullText = payload.text
+        model = payload.model
       } else if (payload.type === 'error') {
         throw new ChatProxyError(payload.errorType, payload.message)
       }
     }
   }
 
-  return fullText
+  return { text: fullText, model }
 }
 
 /** Human-readable message for a caught error, for display in the chat panel. */

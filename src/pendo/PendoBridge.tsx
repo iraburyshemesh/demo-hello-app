@@ -1,10 +1,12 @@
 /**
  * PendoBridge — provider slot for Pendo install & wiring.
  *
- * The Pendo SDK integration has been removed, so this is currently a
- * pass-through. The component is kept because its position in the App.tsx
- * provider stack is fixed per FND-07 — preserving the slot means reinstating
- * the integration is a one-file change that leaves the provider tree alone.
+ * Pendo is wired outside React, so this is a pass-through: the snippet in
+ * index.html loads the agent, src/main.tsx calls `pendo.initialize` once
+ * before the first render, and src/pendo/pendoIdentity.ts keeps the visitor
+ * and account in step with the auth store. The component is kept because its
+ * position in the App.tsx provider stack is fixed per FND-07 — preserving the
+ * slot leaves the provider tree alone if Pendo wiring ever needs React.
  */
 
 import type { ReactNode } from 'react'

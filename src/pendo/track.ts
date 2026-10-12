@@ -70,17 +70,11 @@ export type PendoTrackPropertyValue = string | number | boolean | null | readonl
 /** Track-event properties. `undefined` values are dropped when serialized. */
 export type PendoTrackProperties = Record<string, PendoTrackPropertyValue | undefined>
 
-/** The slice of the global Pendo agent API this module forwards to. */
-type PendoAgent = {
-  track: (event: string, properties?: Record<string, unknown>) => void
-}
-
 export const pendo = {
   /** Send a Pendo track event. No-op while the agent is absent; never throws. */
   track(event: PendoTrackEvent, properties?: PendoTrackProperties): void {
     try {
-      const agent = (window as Window & { pendo?: PendoAgent }).pendo
-      agent?.track(event, properties)
+      window.pendo?.track?.(event, properties)
     } catch (err) {
       console.warn(`[halo:pendo] track "${event}" failed`, err)
     }

@@ -67,7 +67,7 @@ function chatProxyPlugin(apiKey: string | undefined) {
               })
               const finalMessage = await stream.finalMessage()
               const textBlock = finalMessage.content.find((b) => b.type === 'text')
-              res.write(`data: ${JSON.stringify({ type: 'done', text: textBlock?.text ?? '' })}\n\n`)
+              res.write(`data: ${JSON.stringify({ type: 'done', text: textBlock?.text ?? '', model: finalMessage.model })}\n\n`)
             } catch (err) {
               let errorType = 'unknown'
               let message = 'Something went wrong talking to Claude.'
