@@ -18,8 +18,9 @@
  * The bottom-of-form `Sign in` footer anchor is rendered by `SignupShell` for
  * every step — DO NOT re-render it here.
  *
- * No `pendo.*` runtime is invoked; `data-pendo-id` markup is inert until
- * Phase 6 retrofits the agent.
+ * A valid submit emits the `signup_step_completed` Pendo track event through
+ * the `src/pendo/track.ts` facade — a no-op, like the `data-pendo-id` markup,
+ * until Phase 6 retrofits the agent.
  */
 
 import { useForm } from 'react-hook-form'
@@ -28,6 +29,7 @@ import { Navigate, useNavigate } from 'react-router'
 import { Stack, Group, Title } from '@mantine/core'
 import { TextInput, Select, NumberInput, Button } from '../../../ui/primitives'
 import { PENDO_IDS } from '../../../pendo/PENDO_IDS'
+import { pendo } from '../../../pendo/track'
 import {
   step2Schema,
   type Step2Values,
@@ -75,6 +77,13 @@ export function Step2DetailsPage(): React.JSX.Element {
 
   const onSubmit = form.handleSubmit((values) => {
     writeWizardDraftStep('step2', values)
+    // Enum + number selections only — job title and location are free text.
+    pendo.track('signup_step_completed', {
+      stepNumber: 2,
+      stepName: 'about_you',
+      role: values.role,
+      yearsExperience: values.yearsExperience,
+    })
     navigate('/signup/company')
   })
 

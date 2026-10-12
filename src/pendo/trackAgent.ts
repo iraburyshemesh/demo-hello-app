@@ -34,6 +34,8 @@ declare global {
   interface Window {
     /** The Pendo agent — undefined until the Pendo install snippet has run. */
     pendo?: {
+      /** Pendo track-event API — see `./track.ts`. */
+      track?: (event: string, properties?: Record<string, unknown>) => void
       trackAgent?: (eventType: AgentEventType, metadata: AgentEventMetadata) => void
     }
   }

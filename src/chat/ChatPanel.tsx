@@ -12,10 +12,16 @@ import {
 import { IconX, IconTrash, IconSend, IconAlertCircle } from '@tabler/icons-react'
 import { Button, Textarea } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { pendo } from '../pendo/track'
 import { trackAgent } from '../pendo/trackAgent'
 import { useAuthStore } from '../auth'
 import { listMessages, appendMessage, clearMessages } from './chatRepo'
-import { streamChatReply, describeChatError } from './claudeClient'
+import {
+  streamChatReply,
+  describeChatError,
+  ChatNotConfiguredError,
+  ChatProxyError,
+} from './claudeClient'
 import type { ChatMessage } from './types'
 
 /** Pendo Agent Analytics ID for Halo Assistant, the agent behind this panel. */
@@ -24,6 +30,9 @@ const PENDO_AGENT_ID = 'IOVJmyPj-xGWnZV-cKnb8vgRQKk'
 interface ChatPanelProps {
   onClose: () => void
 }
+
+/** How a prompt was submitted — `sendMethod` on `ai_chat_message_sent`. */
+type ChatSendMethod = 'enter_key' | 'send_button'
 
 /**
  * Agent chat panel — message history + input, wired to the real Claude API.
@@ -49,7 +58,7 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
 
   const history = useMemo(() => messages, [messages])
 
-  async function handleSend() {
+  async function handleSend(sendMethod: ChatSendMethod) {
     if (!workspaceId || !canSend) return
     const text = draft.trim()
     setDraft('')
@@ -72,8 +81,20 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
       fileUploaded: false,
     })
 
+    // Message and reply content are never sent to Pendo — only their lengths.
+    const conversationTurn = nextHistory.filter((m) => m.role === 'user').length
+    pendo.track('ai_chat_message_sent', {
+      messageId: userMessage.id,
+      messageLength: text.length,
+      conversationTurn,
+      historyLength: nextHistory.length,
+      isNewConversation: history.length === 0,
+      sendMethod,
+    })
+
     setIsSending(true)
     setStreamingText('')
+    const startedAt = Date.now()
     try {
       const reply = await streamChatReply(nextHistory, (chunk) =>
         setStreamingText((prev) => (prev ?? '') + chunk),
@@ -87,6 +108,13 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
         content: reply.text,
         modelUsed: reply.model,
       })
+      pendo.track('ai_chat_response_received', {
+        messageId: assistantMessage.id,
+        responseLength: reply.text.length,
+        latencyMs: Date.now() - startedAt,
+        conversationTurn,
+        historyLength: nextHistory.length + 1,
+      })
     } catch (err) {
       const description = describeChatError(err)
       setErrorText(description)
@@ -96,6 +124,18 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
         isError: true,
       })
       setMessages((prev) => [...prev, errorMessage])
+      pendo.track('ai_chat_response_failed', {
+        errorType:
+          err instanceof ChatProxyError
+            ? err.errorType
+            : err instanceof ChatNotConfiguredError
+              ? 'not_configured'
+              : 'network_error',
+        errorMessage: description.slice(0, 100),
+        latencyMs: Date.now() - startedAt,
+        conversationTurn,
+        messageLength: text.length,
+      })
     } finally {
       setStreamingText(null)
       setIsSending(false)
@@ -104,6 +144,16 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
 
   function handleClear() {
     if (!workspaceId) return
+    // Measured before the wipe; clearing an already-empty conversation is not tracked.
+    if (messages.length > 0) {
+      const durationMs = Date.now() - new Date(messages[0].createdAt).getTime()
+      pendo.track('ai_chat_conversation_cleared', {
+        messageCount: messages.length,
+        userMessageCount: messages.filter((m) => m.role === 'user').length,
+        errorMessageCount: messages.filter((m) => m.isError).length,
+        conversationDurationMinutes: Number((durationMs / 60_000).toFixed(1)),
+      })
+    }
     clearMessages(workspaceId)
     setMessages([])
     setErrorText(null)
@@ -198,7 +248,7 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              void handleSend()
+              void handleSend('enter_key')
             }
           }}
           autosize
@@ -208,7 +258,7 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
         />
         <Button
           pendoId={PENDO_IDS.agentChat.panel.sendButton}
-          onClick={() => void handleSend()}
+          onClick={() => void handleSend('send_button')}
           disabled={!canSend}
           px={10}
         >

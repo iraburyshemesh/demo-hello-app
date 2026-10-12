@@ -12,6 +12,11 @@
  *
  * Then calls `onSuccess()` (parent bumps refreshKey) and `onClose()`.
  *
+ * Pendo track events (via `src/pendo/track.ts`): `task_created` on create;
+ * `task_updated` on edit, plus `task_completed` / `task_reopened` when the edit
+ * moves status into / out of 'done' (method 'edit_modal' — the Lists row
+ * checkbox emits the same events with method 'checkbox').
+ *
  * The completedAt invariant is owned by `tasksRepo.updateTask` (D-09) — this
  * form NEVER touches `completedAt`. Even if the user moves status to/from
  * 'done' via the modal, the repo handles the timestamp.
@@ -48,6 +53,7 @@ import {
   Button,
 } from '../../ui/primitives'
 import { PENDO_IDS } from '../../pendo/PENDO_IDS'
+import { pendo } from '../../pendo/track'
 import {
   TaskFormSchema,
   TaskStatusEnum,
@@ -58,7 +64,8 @@ import {
   TASK_PRIORITY_LABELS,
 } from '../labels'
 import type { Task, TaskFormValues, Assignee } from '../types'
-import { createTask, updateTask } from '../tasksRepo'
+import { createTask, updateTask, listTasks } from '../tasksRepo'
+import { taskCompletedProperties, taskReopenedProperties } from '../taskTrackProperties'
 import { getAssigneeOptions } from '../assigneeOptions'
 import type { Visitor } from '../../auth/types'
 
@@ -78,6 +85,11 @@ export type TaskFormModalProps = {
   mode: 'create' | 'edit'
   /** Required when `mode='edit'`. */
   initialTask?: Task
+  /**
+   * Create mode only: the control that opened the modal — reported as
+   * `entryPoint` on the `task_created` Pendo track event.
+   */
+  entryPoint?: 'header_button' | 'empty_state'
 }
 
 const STATUS_OPTIONS = TaskStatusEnum.options.map((s) => ({
@@ -98,6 +110,7 @@ export function TaskFormModal({
   visitor,
   mode,
   initialTask,
+  entryPoint,
 }: TaskFormModalProps): React.JSX.Element {
   const defaultAssignee: Assignee = {
     id: visitor.id,
@@ -187,7 +200,20 @@ export function TaskFormModal({
 
   const onSubmit = form.handleSubmit((values) => {
     if (mode === 'create') {
-      createTask(workspaceId, { ...values, completedAt: null })
+      const isFirstTask = listTasks(workspaceId).length === 0
+      const task = createTask(workspaceId, { ...values, completedAt: null })
+      // Free-text title / description are never sent — only whether a
+      // description exists.
+      pendo.track('task_created', {
+        taskId: task.id,
+        status: task.status,
+        priority: task.priority,
+        hasDescription: task.description.trim().length > 0,
+        hasDueDate: task.dueDate !== null,
+        assigneeIsSelf: task.assignee.id === visitor.id,
+        isFirstTask,
+        entryPoint,
+      })
       notifications.show({
         title: 'Task created',
         message: '',
@@ -196,7 +222,34 @@ export function TaskFormModal({
         autoClose: 3000,
       })
     } else if (initialTask) {
-      updateTask(workspaceId, initialTask.id, values)
+      const updated = updateTask(workspaceId, initialTask.id, values)
+      if (updated) {
+        // Field names only (diffed against the task the modal opened with).
+        const fieldsChanged = TaskFormSchema.keyof().options.filter((field) =>
+          field === 'assignee'
+            ? values.assignee.id !== initialTask.assignee.id
+            : values[field] !== initialTask[field],
+        )
+        pendo.track('task_updated', {
+          taskId: initialTask.id,
+          fieldsChanged,
+          fieldsChangedCount: fieldsChanged.length,
+          previousStatus: initialTask.status,
+          status: values.status,
+          previousPriority: initialTask.priority,
+          priority: values.priority,
+          assigneeChanged: fieldsChanged.includes('assignee'),
+          dueDateChanged: fieldsChanged.includes('dueDate'),
+        })
+        if (initialTask.status !== 'done' && updated.status === 'done') {
+          pendo.track(
+            'task_completed',
+            taskCompletedProperties(initialTask, updated, 'edit_modal', visitor.id),
+          )
+        } else if (initialTask.status === 'done' && updated.status !== 'done') {
+          pendo.track('task_reopened', taskReopenedProperties(initialTask, updated, 'edit_modal'))
+        }
+      }
       notifications.show({
         title: 'Changes saved',
         message: '',

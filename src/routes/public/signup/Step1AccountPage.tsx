@@ -18,8 +18,9 @@
  *
  * Every interactive control carries a `data-pendo-id` from
  * `PENDO_IDS.signup.step1.*` — the typed `pendoId` prop on the wrapped
- * primitives enforces this at the type level. No Pendo runtime is invoked
- * here (Phase 6 retrofits the agent).
+ * primitives enforces this at the type level. The `signup_step_completed` and
+ * `signup_duplicate_account_detected` Pendo track events go through the
+ * `src/pendo/track.ts` facade — a no-op until Phase 6 retrofits the agent.
  *
  * The bottom-of-form "Sign in" footer anchor is rendered by `SignupShell`
  * for every step — DO NOT re-render it here.
@@ -31,6 +32,7 @@ import { useNavigate } from 'react-router'
 import { Stack, Group, Title, Text } from '@mantine/core'
 import { TextInput, PasswordInput, Button, Anchor } from '../../../ui/primitives'
 import { PENDO_IDS } from '../../../pendo/PENDO_IDS'
+import { pendo } from '../../../pendo/track'
 import {
   step1Schema,
   type Step1Values,
@@ -71,6 +73,10 @@ export function Step1AccountPage(): React.JSX.Element {
       // render the anchor conditionally on the field below via an isDuplicate
       // boolean check against the locked copy.
       form.setError('email', { type: 'manual', message: EMAIL_DUPLICATE_MESSAGE })
+      pendo.track('signup_duplicate_account_detected', {
+        duplicateField: 'email',
+        stepNumber: 1,
+      })
       return
     }
     const usernameDup = findVisitorByUsername(values.username)
@@ -78,6 +84,10 @@ export function Step1AccountPage(): React.JSX.Element {
       form.setError('username', {
         type: 'manual',
         message: 'That username is taken — try another.',
+      })
+      pendo.track('signup_duplicate_account_detected', {
+        duplicateField: 'username',
+        stepNumber: 1,
       })
       return
     }
@@ -88,6 +98,8 @@ export function Step1AccountPage(): React.JSX.Element {
     const { password, ...nonSecretValues } = values
     setWizardPassword(password)
     writeWizardDraftStep('step1', nonSecretValues)
+    // Every step-1 field is PII, so the event carries no field values.
+    pendo.track('signup_step_completed', { stepNumber: 1, stepName: 'account' })
     navigate('/signup/details')
   })
 

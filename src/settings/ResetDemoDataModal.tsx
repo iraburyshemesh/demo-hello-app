@@ -72,8 +72,12 @@
 import { Modal, Group, Text } from '@mantine/core'
 import { Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { pendo } from '../pendo/track'
 import { clearPendoSession } from '../pendo/pendoIdentity'
 import { K } from '../storage/keys'
+import { useAuthStore } from '../auth'
+import { listTasks } from '../tasks/tasksRepo'
+import { listTeammates } from '../team/teamsRepo'
 
 export type ResetDemoDataModalProps = {
   opened: boolean
@@ -95,6 +99,20 @@ export function ResetDemoDataModal({ opened, onClose }: ResetDemoDataModalProps)
       const key = localStorage.key(i)
       if (key && key.startsWith('halo:v')) keysToRemove.push(key)
     }
+
+    // Pendo `demo_data_reset` — fired BEFORE anything is wiped: the session and
+    // the records counted below are destroyed by the removal loop, and the hard
+    // reload ends the JS context right after.
+    const { currentVisitor, currentWorkspace } = useAuthStore.getState()
+    pendo.track('demo_data_reset', {
+      keysRemovedCount: keysToRemove.length,
+      taskCount: currentWorkspace ? listTasks(currentWorkspace.id).length : 0,
+      teammateCount: currentWorkspace ? listTeammates(currentWorkspace.id).length : 0,
+      accountAgeDays: currentVisitor
+        ? Math.floor((Date.now() - new Date(currentVisitor.createdAt).getTime()) / 86_400_000)
+        : null,
+    })
+
     keysToRemove.forEach((k) => localStorage.removeItem(k))
     // At this exact moment: zero halo:v1:* keys remain in localStorage.
     // After the hard reload below, runMigrations() writes a fresh halo:v1:meta
