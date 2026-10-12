@@ -17,6 +17,9 @@ import { listMessages, appendMessage, clearMessages } from './chatRepo'
 import { streamChatReply, describeChatError } from './claudeClient'
 import type { ChatMessage } from './types'
 
+/** Pendo Agent Analytics ID for Halo Assistant — the `agentId` on every trackAgent event. */
+const PENDO_AGENT_ID = 'DJ5Rzot0i2t1lWtj7_qofMTB-5A'
+
 interface ChatPanelProps {
   onClose: () => void
 }
@@ -55,6 +58,18 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
     const nextHistory = [...history, userMessage]
     setMessages(nextHistory)
 
+    // Pendo Agent Analytics: a conversation is keyed by its first message's id, which is
+    // persisted with the history and changes once "Start a new conversation" clears it.
+    const conversationId = nextHistory[0].id
+    window.pendo?.trackAgent?.('prompt', {
+      agentId: PENDO_AGENT_ID,
+      conversationId,
+      messageId: userMessage.id,
+      content: text,
+      suggestedPrompt: false,
+      fileUploaded: false,
+    })
+
     setIsSending(true)
     setStreamingText('')
     try {
@@ -63,6 +78,12 @@ export function ChatPanel({ onClose }: ChatPanelProps): React.JSX.Element {
       )
       const assistantMessage = appendMessage(workspaceId, { role: 'assistant', content: fullReply })
       setMessages((prev) => [...prev, assistantMessage])
+      window.pendo?.trackAgent?.('agent_response', {
+        agentId: PENDO_AGENT_ID,
+        conversationId,
+        messageId: assistantMessage.id,
+        content: fullReply,
+      })
     } catch (err) {
       const description = describeChatError(err)
       setErrorText(description)
