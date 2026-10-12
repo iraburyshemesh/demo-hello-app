@@ -25,7 +25,8 @@
  * SET-05 (pendo.identify on save) deferred to Phase 6 per CONTEXT.md (also
  * documented in ROADMAP §Phase 4 preamble). The onSubmit success branch is
  * structured so Phase 6 can drop in the pendo.identify call alongside
- * notifications.show without restructuring.
+ * notifications.show without restructuring. It already emits the
+ * `profile_updated` Pendo track event (changed field names + role enum only).
  */
 
 import { useForm } from 'react-hook-form'
@@ -36,6 +37,7 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react'
 import { TextInput, Select, Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { pendo } from '../pendo/track'
 import {
   VisitorSchema,
   updateVisitor,
@@ -97,6 +99,17 @@ export function ProfileTab(): React.JSX.Element | null {
     const updated = updateVisitor(visitor.id, values)
     if (updated) {
       useAuthStore.setState({ currentVisitor: updated })
+      // Field names and the role enum only — never the free-text values.
+      const fieldsChanged = ProfileFormSchema.keyof().options.filter(
+        (field) => values[field] !== visitor[field],
+      )
+      pendo.track('profile_updated', {
+        fieldsChanged,
+        fieldsChangedCount: fieldsChanged.length,
+        role: values.role,
+        previousRole: visitor.role,
+        roleChanged: values.role !== visitor.role,
+      })
       notifications.show({
         title: 'Profile saved',
         message: '',

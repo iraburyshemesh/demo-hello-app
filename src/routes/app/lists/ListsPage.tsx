@@ -21,6 +21,7 @@
  *   - statusFilter / priorityFilter / assigneeFilter ('all' | enum value)
  *   - refreshKey (bump after every mutation so the useMemo re-reads listTasks)
  *   - createOpen / editTask / deleteTarget (modal open + identity)
+ *   - deleteSource (which control opened the delete confirm — Pendo context)
  *
  * Refresh pattern (D-05 + Plan analog from Dashboard): `useMemo` keyed on
  * `[workspaceId, refreshKey]`. Mutations call `tasksRepo.*` then `refresh()`
@@ -35,21 +36,31 @@
  * boundaries.
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Stack, Group, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
 import { Button } from '../../../ui/primitives'
 import { PENDO_IDS } from '../../../pendo/PENDO_IDS'
+import { pendo } from '../../../pendo/track'
 import { useAuthStore } from '../../../auth/authStore'
 import { listTasks, updateTask, deleteTask } from '../../../tasks/tasksRepo'
 import type { Task } from '../../../tasks/types'
+import {
+  assigneeFilterScope,
+  isTaskOverdue,
+  taskCompletedProperties,
+  taskReopenedProperties,
+} from '../../../tasks/taskTrackProperties'
 import { TaskTable } from '../../../tasks/components/TaskTable'
 import { TaskFiltersBar } from '../../../tasks/components/TaskFiltersBar'
 import { TaskFormModal } from '../../../tasks/components/TaskFormModal'
 import { DeleteConfirmModal } from '../../../tasks/components/DeleteConfirmModal'
 import { ListsEmptyState } from '../../../tasks/components/ListsEmptyState'
 import { FilteredEmptyState } from '../../../tasks/components/FilteredEmptyState'
+
+/** Control that opened the delete confirm (`task_deleted` deleteSource). */
+type DeleteSource = 'row_menu' | 'edit_modal'
 
 export function ListsPage(): React.JSX.Element {
   const visitor = useAuthStore((s) => s.currentVisitor)
@@ -69,6 +80,7 @@ export function ListsPage(): React.JSX.Element {
   const [createOpen, setCreateOpen] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null)
+  const [deleteSource, setDeleteSource] = useState<DeleteSource>('row_menu')
 
   const allTasks = useMemo(
     () => (workspaceId ? listTasks(workspaceId) : []),
@@ -94,6 +106,39 @@ export function ListsPage(): React.JSX.Element {
     setPriorityFilter('all')
     setAssigneeFilter('all')
   }
+
+  // Pendo `task_filters_applied`: one event per actual filter change, after
+  // filteredTasks has been recomputed (a "Clear filters" reset batches into a
+  // single event). The last-tracked key starts at the mount values, so nothing
+  // fires on mount — StrictMode's effect re-run included. Must stay above the
+  // defensive early return (Rules of Hooks).
+  const filterKey = `${statusFilter}|${priorityFilter}|${assigneeFilter}`
+  const lastTrackedFilterKeyRef = useRef(filterKey)
+  useEffect(() => {
+    if (filterKey === lastTrackedFilterKeyRef.current) return
+    lastTrackedFilterKeyRef.current = filterKey
+    pendo.track('task_filters_applied', {
+      statusFilter,
+      priorityFilter,
+      assigneeFilter: assigneeFilterScope(assigneeFilter, visitor?.id),
+      assigneeFilterIsSelf: assigneeFilter === visitor?.id,
+      activeFilterCount: [statusFilter, priorityFilter, assigneeFilter].filter(
+        (f) => f !== 'all',
+      ).length,
+      resultsCount: filteredTasks.length,
+      totalTaskCount: allTasks.length,
+      filtersCleared: !filtersActive,
+    })
+  }, [
+    filterKey,
+    statusFilter,
+    priorityFilter,
+    assigneeFilter,
+    filteredTasks,
+    allTasks,
+    visitor,
+    filtersActive,
+  ])
 
   // Defensive narrowing — RequireAuth + AppLayout already gate this, but
   // mirror Dashboard.tsx line 288's belt-and-suspenders pattern.
@@ -142,13 +187,29 @@ export function ListsPage(): React.JSX.Element {
               tasks={filteredTasks}
               workspaceId={workspaceId}
               onEdit={(task) => setEditTask(task)}
-              onDelete={(task) => setDeleteTarget(task)}
+              onDelete={(task) => {
+                setDeleteSource('row_menu')
+                setDeleteTarget(task)
+              }}
               onToggleComplete={(task, nextDone) => {
-                updateTask(workspaceId, task.id, {
+                const updated = updateTask(workspaceId, task.id, {
                   // Off-toggle: restore prior non-done status if recorded;
                   // fall back to 'todo' for legacy tasks without prevStatus.
                   status: nextDone ? 'done' : (task.prevStatus ?? 'todo'),
                 })
+                if (updated) {
+                  if (nextDone) {
+                    pendo.track(
+                      'task_completed',
+                      taskCompletedProperties(task, updated, 'checkbox', visitor.id),
+                    )
+                  } else {
+                    pendo.track(
+                      'task_reopened',
+                      taskReopenedProperties(task, updated, 'checkbox'),
+                    )
+                  }
+                }
                 refresh()
               }}
             />
@@ -156,7 +217,10 @@ export function ListsPage(): React.JSX.Element {
         </>
       )}
 
-      {/* Create modal */}
+      {/* Create modal — the header button only renders when tasks exist and
+       *  the empty-state CTA only when none do, so the task count identifies
+       *  which control opened it (Pendo `task_created` entryPoint).
+       */}
       <TaskFormModal
         opened={createOpen}
         onClose={() => setCreateOpen(false)}
@@ -164,6 +228,7 @@ export function ListsPage(): React.JSX.Element {
         workspaceId={workspaceId}
         visitor={visitor}
         mode="create"
+        entryPoint={allTasks.length === 0 ? 'empty_state' : 'header_button'}
       />
 
       {/* Edit modal — opens when editTask !== null. onRequestDelete closes
@@ -174,7 +239,10 @@ export function ListsPage(): React.JSX.Element {
         opened={editTask !== null}
         onClose={() => setEditTask(null)}
         onSuccess={refresh}
-        onRequestDelete={(task) => setDeleteTarget(task)}
+        onRequestDelete={(task) => {
+          setDeleteSource('edit_modal')
+          setDeleteTarget(task)
+        }}
         workspaceId={workspaceId}
         visitor={visitor}
         mode="edit"
@@ -187,7 +255,18 @@ export function ListsPage(): React.JSX.Element {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => {
           if (deleteTarget) {
-            deleteTask(workspaceId, deleteTarget.id)
+            const deleted = deleteTask(workspaceId, deleteTarget.id)
+            if (deleted) {
+              const ageMs = Date.now() - new Date(deleteTarget.createdAt).getTime()
+              pendo.track('task_deleted', {
+                taskId: deleteTarget.id,
+                status: deleteTarget.status,
+                priority: deleteTarget.priority,
+                taskAgeDays: Number((ageMs / 86_400_000).toFixed(1)),
+                wasOverdue: isTaskOverdue(deleteTarget),
+                deleteSource,
+              })
+            }
             notifications.show({
               title: 'Task deleted',
               message: '',

@@ -21,7 +21,9 @@
  * SET-05 (pendo.identify/account update on save) deferred to Phase 6 per
  * CONTEXT.md. The onSubmit success branch is structured so Phase 6 can drop
  * in the pendo.identify (or pendo.updateOptions for account) call alongside
- * notifications.show without restructuring.
+ * notifications.show without restructuring. It already emits the
+ * `workspace_settings_updated` Pendo track event, plus `plan_tier_changed`
+ * when the plan changes.
  *
  * Three Select option arrays are locked-string-equal to the Step3CompanyPage
  * arrays (the Zod enum check is strict-equal against the same strings:
@@ -38,6 +40,7 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react'
 import { TextInput, Select, Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { pendo } from '../pendo/track'
 import {
   WorkspaceSchema,
   updateWorkspace,
@@ -96,6 +99,32 @@ export function WorkspaceTab(): React.JSX.Element | null {
     const updated = updateWorkspace(workspace.id, values)
     if (updated) {
       useAuthStore.setState({ currentWorkspace: updated })
+      // `workspace` is still the pre-save record here. The company name itself
+      // is never sent — only whether it changed.
+      const fieldsChanged = WorkspaceFormSchema.keyof().options.filter(
+        (field) => values[field] !== workspace[field],
+      )
+      pendo.track('workspace_settings_updated', {
+        fieldsChanged,
+        fieldsChangedCount: fieldsChanged.length,
+        companySize: values.companySize,
+        industry: values.industry,
+        planTier: values.planTier,
+        companyNameChanged: values.companyName !== workspace.companyName,
+      })
+      if (values.planTier !== workspace.planTier) {
+        pendo.track('plan_tier_changed', {
+          previousPlanTier: workspace.planTier,
+          newPlanTier: values.planTier,
+          // PLAN_OPTIONS is ordered Free → Pro → Enterprise.
+          changeDirection:
+            PLAN_OPTIONS.indexOf(values.planTier) > PLAN_OPTIONS.indexOf(workspace.planTier)
+              ? 'upgrade'
+              : 'downgrade',
+          changeSource: 'settings_workspace_tab',
+          companySize: values.companySize,
+        })
+      }
       notifications.show({
         title: 'Workspace saved',
         message: '',

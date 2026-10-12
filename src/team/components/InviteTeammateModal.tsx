@@ -9,6 +9,7 @@
  * On valid submit:
  *   - Derives firstName from email local-part (split on '.' or '_', Title-Case).
  *   - Calls teamsRepo.createTeammate with status='invited'.
+ *   - Emits the `teammate_invited` Pendo track event (email domain only).
  *   - Emits green 'Invite sent' toast.
  *   - Calls onSuccess() (parent bumps refreshKey) and onClose().
  *
@@ -34,7 +35,8 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck } from '@tabler/icons-react'
 import { TextInput, Select, Button } from '../../ui/primitives'
 import { PENDO_IDS } from '../../pendo/PENDO_IDS'
-import { createTeammate, findTeammateByEmail } from '../teamsRepo'
+import { pendo } from '../../pendo/track'
+import { createTeammate, findTeammateByEmail, listTeammates } from '../teamsRepo'
 
 export type InviteTeammateModalProps = {
   opened: boolean
@@ -42,6 +44,11 @@ export type InviteTeammateModalProps = {
   /** Parent bumps refreshKey after success so the table re-reads teammates. */
   onSuccess: () => void
   workspaceId: string
+  /**
+   * The control that opened the modal — reported as `inviteSource` on the
+   * `teammate_invited` Pendo track event.
+   */
+  inviteSource?: 'header_button' | 'empty_state'
 }
 
 export function InviteTeammateModal({
@@ -49,6 +56,7 @@ export function InviteTeammateModal({
   onClose,
   onSuccess,
   workspaceId,
+  inviteSource,
 }: InviteTeammateModalProps): React.JSX.Element {
   // Local-form-schema per Phase 4 D-15. Defined inside useMemo so the closure
   // captures the current workspaceId for the .superRefine dedupe check (D-03).
@@ -99,7 +107,10 @@ export function InviteTeammateModal({
       .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase())
       .join(' ')
 
-    createTeammate(workspaceId, {
+    // Read before the write — the first invite is one sent while no teammate
+    // has ever been invited (seeded teammates are active, never invited).
+    const existingTeammates = listTeammates(workspaceId)
+    const teammate = createTeammate(workspaceId, {
       firstName,
       lastName: '',
       email: values.email.toLowerCase(),
@@ -108,6 +119,16 @@ export function InviteTeammateModal({
       lastActiveAt: null,
       invitedAt: new Date().toISOString(),
       avatar: null,
+    })
+
+    pendo.track('teammate_invited', {
+      teammateId: teammate.id,
+      inviteeRole: values.workspaceRole,
+      // Email domain only — never the full address.
+      inviteeEmailDomain: values.email.split('@')[1]?.toLowerCase(),
+      teamSizeAfterInvite: existingTeammates.length + 1,
+      isFirstInvite: !existingTeammates.some((t) => t.invitedAt !== null),
+      inviteSource,
     })
 
     notifications.show({

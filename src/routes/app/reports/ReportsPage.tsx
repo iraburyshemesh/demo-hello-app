@@ -37,15 +37,17 @@
  * Phase 3 D-01 placeholder convention forbids router edits at phase boundaries.
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { Stack, Group, Title } from '@mantine/core'
 import { IconDownload } from '@tabler/icons-react'
 import dayjs from 'dayjs'
 import { Button } from '../../../ui/primitives'
 import { PENDO_IDS } from '../../../pendo/PENDO_IDS'
+import { pendo } from '../../../pendo/track'
 import { useAuthStore } from '../../../auth/authStore'
 import { listTasks } from '../../../tasks/tasksRepo'
 import { computeNowRef } from '../../../tasks/now-ref'
+import { assigneeFilterScope } from '../../../tasks/taskTrackProperties'
 import type { TaskStatus } from '../../../tasks/types'
 import { ReportsFiltersBar } from '../../../reports/ReportsFiltersBar'
 import { ReportsChart } from '../../../reports/ReportsChart'
@@ -53,6 +55,26 @@ import { ReportsTable } from '../../../reports/ReportsTable'
 import { exportTasksToCsv } from '../../../reports/csvExport'
 
 const DEFAULT_STATUS_FILTER: TaskStatus[] = ['todo', 'in_progress', 'done']
+
+/**
+ * Filter context shared by the `report_filters_applied` and
+ * `report_csv_exported` Pendo track events.
+ */
+function reportFilterProperties(
+  dateRange: [Date | null, Date | null],
+  assignee: string,
+  statusFilter: TaskStatus[],
+  visitorId: string | undefined,
+) {
+  const [start, end] = dateRange
+  return {
+    dateRangeStart: start ? start.toISOString() : null,
+    dateRangeEnd: end ? end.toISOString() : null,
+    dateRangeDays: start && end ? dayjs(end).diff(start, 'day') + 1 : null,
+    assigneeFilter: assigneeFilterScope(assignee, visitorId),
+    statusFilter,
+  }
+}
 
 export function ReportsPage(): React.JSX.Element {
   const visitor = useAuthStore((s) => s.currentVisitor)
@@ -106,6 +128,31 @@ export function ReportsPage(): React.JSX.Element {
       .sort((a, b) => dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf())
   }, [allTasks, dateRange, assignee, statusFilter])
 
+  // Pendo `report_filters_applied`: one event per settled filter change, never
+  // for the initial default state. Compared by value — the filter bar hands
+  // back fresh Date / array instances on every change. The range picker emits
+  // an intermediate [start, null] while the end date is being picked; that is
+  // skipped (Mantine resets an abandoned half-range to [null, null] on close).
+  // Must stay above the defensive early return (Rules of Hooks).
+  const filterKey = [
+    dateRange[0]?.getTime() ?? '',
+    dateRange[1]?.getTime() ?? '',
+    assignee,
+    statusFilter.join(','),
+  ].join('|')
+  const lastTrackedFilterKeyRef = useRef(filterKey)
+  useEffect(() => {
+    if (filterKey === lastTrackedFilterKeyRef.current) return
+    if (dateRange[0] && !dateRange[1]) return
+    lastTrackedFilterKeyRef.current = filterKey
+    pendo.track('report_filters_applied', {
+      ...reportFilterProperties(dateRange, assignee, statusFilter, visitor?.id),
+      statusFilterCount: statusFilter.length,
+      resultsCount: filteredTasks.length,
+      totalTaskCount: allTasks.length,
+    })
+  }, [filterKey, dateRange, assignee, statusFilter, filteredTasks, allTasks, visitor])
+
   // Defensive narrowing — RequireAuth already gates this path.
   if (!workspaceId || !visitor) return <></>
 
@@ -118,7 +165,16 @@ export function ReportsPage(): React.JSX.Element {
           variant="outline"
           leftSection={<IconDownload size={16} />}
           pendoId={PENDO_IDS.reports.csvExport}
-          onClick={() => exportTasksToCsv(filteredTasks)}
+          onClick={() => {
+            const fileName = exportTasksToCsv(filteredTasks)
+            pendo.track('report_csv_exported', {
+              rowCount: filteredTasks.length,
+              totalTaskCount: allTasks.length,
+              fileFormat: 'csv',
+              fileName,
+              ...reportFilterProperties(dateRange, assignee, statusFilter, visitor.id),
+            })
+          }}
           disabled={filteredTasks.length === 0}
         >
           Export CSV

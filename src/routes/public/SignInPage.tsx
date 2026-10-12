@@ -31,10 +31,12 @@
  * SignInPage is NOT a child of `SignupShell` — it has its own Container and
  * is not part of the wizard (no Stepper, no draft state, no Back button).
  *
- * The page does NOT invoke any Pendo runtime API — Phase 6 retrofits the
- * agent's identify-on-success call onto the success branch. Every interactive
- * control sources `pendoId` from `PENDO_IDS.signin.*` (the typed `pendoId`
- * prop on the wrapped primitives enforces this at the type level).
+ * Outcomes are reported as the `user_signed_in` / `user_sign_in_failed` Pendo
+ * track events through the `src/pendo/track.ts` facade (a no-op until the
+ * agent is installed); Phase 6 still retrofits the agent's identify-on-success
+ * call onto the success branch. Every interactive control sources `pendoId`
+ * from `PENDO_IDS.signin.*` (the typed `pendoId` prop on the wrapped
+ * primitives enforces this at the type level).
  */
 
 import { useState } from 'react'
@@ -45,6 +47,7 @@ import { Container, Stack, Paper, Title, Text, Alert } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 import { TextInput, PasswordInput, Button, Anchor } from '../../ui/primitives'
 import { PENDO_IDS } from '../../pendo/PENDO_IDS'
+import { pendo } from '../../pendo/track'
 import { signinSchema, type SigninValues, useAuthStore } from '../../auth'
 
 export function SignInPage(): React.JSX.Element {
@@ -70,6 +73,16 @@ export function SignInPage(): React.JSX.Element {
       .getState()
       .signInWithCredentials(values.email, values.password)
     if (result.ok) {
+      // signInWithCredentials has written the session — read the signed-in
+      // records back for the event context.
+      const { currentVisitor, currentWorkspace } = useAuthStore.getState()
+      pendo.track('user_signed_in', {
+        planTier: currentWorkspace?.planTier,
+        signInMethod: 'password',
+        accountAgeDays: currentVisitor
+          ? Math.floor((Date.now() - new Date(currentVisitor.createdAt).getTime()) / 86_400_000)
+          : null,
+      })
       navigate('/app', { replace: true })
       return
     }
@@ -79,6 +92,11 @@ export function SignInPage(): React.JSX.Element {
     // enumeration mitigation T-02-45 at the API surface).
     console.log('Sign in failed:', result.reason)
     setCredError(result.reason)
+    // Never includes the entered email or password.
+    pendo.track('user_sign_in_failed', {
+      failureReason: result.reason,
+      signInMethod: 'password',
+    })
   })
 
   return (
