@@ -72,6 +72,7 @@
 import { Modal, Group, Text } from '@mantine/core'
 import { Button } from '../ui/primitives'
 import { PENDO_IDS } from '../pendo/PENDO_IDS'
+import { clearPendoSession } from '../pendo/pendoIdentity'
 import { K } from '../storage/keys'
 
 export type ResetDemoDataModalProps = {
@@ -116,6 +117,12 @@ export function ResetDemoDataModal({ opened, onClose }: ResetDemoDataModalProps)
     //    lock — theme preference survives reset). This is the ONLY localStorage
     //    key deliberately preserved across the reset because Mantine owns it
     //    and it lives outside the halo:v* envelope by design.
+
+    // Reset Pendo to a fresh anonymous visitor. The reset signs the user out
+    // without going through authStore.signOut(), and Pendo's own storage sits
+    // outside the halo:v* envelope, so the agent would otherwise resume the
+    // deleted visitor after the reload.
+    clearPendoSession()
 
     // 4. Hard reload — re-runs boot sequence with clean state.
     window.location.href = '/'
