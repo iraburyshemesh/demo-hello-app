@@ -181,7 +181,7 @@ export function AppLayout(): React.JSX.Element {
         <Stack gap={8}>
           <NavLink
             pendoId={PENDO_IDS.nav.dashboard}
-            label="Dashboard"
+            label="Dashboards tab"
             leftSection={<IconLayoutDashboard size={18} stroke={1.6} />}
             active={isNavActive(pathname, "/app")}
             variant="light"
